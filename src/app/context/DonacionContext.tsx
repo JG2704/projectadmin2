@@ -19,6 +19,7 @@ export interface EventoTrazabilidad {
 export interface Donacion {
   id: string;
   categoria: CategoriaDonacion;
+  organizacion: string;
   nombreObjeto: string;
   cantidad: string;
   descripcion: string;
@@ -87,6 +88,7 @@ export const DonacionProvider: React.FC<{ children: ReactNode }> = ({ children }
         {
           id: 'DON-001',
           categoria: 'medicamentos',
+          organizacion: 'HelpCare',
           nombreObjeto: 'Medicamentos varios',
           cantidad: '50',
           descripcion: 'Analgésicos y antibióticos',
@@ -137,6 +139,7 @@ export const DonacionProvider: React.FC<{ children: ReactNode }> = ({ children }
         {
           id: 'DON-002',
           categoria: 'ropa',
+          organizacion: 'IsaacHelp',
           nombreObjeto: 'Ropa de abrigo',
           cantidad: '100',
           descripcion: 'Ropa de abrigo y calzado',
@@ -178,6 +181,7 @@ export const DonacionProvider: React.FC<{ children: ReactNode }> = ({ children }
         {
           id: 'DON-003',
           categoria: 'fondos',
+          organizacion: 'Fonds',
           nombreObjeto: 'Donación monetaria',
           cantidad: '50000',
           descripcion: 'Aporte para compra de alimentos',

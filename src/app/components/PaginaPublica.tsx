@@ -221,6 +221,7 @@ export const PaginaPublica: React.FC = () => {
 const FormularioDonacion: React.FC<{ onVolver: () => void; onDonacionCreada: (donacion: any) => void }> = ({ onVolver, onDonacionCreada }) => {
   const [formData, setFormData] = useState({
     categoria: 'medicamentos' as CategoriaDonacion,
+    organizacion: '',
     nombreObjeto: '',
     cantidad: '',
     descripcion: '',
@@ -239,6 +240,10 @@ const FormularioDonacion: React.FC<{ onVolver: () => void; onDonacionCreada: (do
 
     if (formData.categoria !== 'fondos' && !formData.nombreObjeto.trim()) {
       errores.nombreObjeto = 'El nombre del objeto es obligatorio';
+    }
+
+    if (formData.organizacion !== 'fondos' && !formData.organizacion.trim()) {
+      errores.organizacion = 'El nombre de la organización es obligatorio';
     }
 
     if (!formData.cantidad.trim()) {
@@ -297,6 +302,7 @@ const FormularioDonacion: React.FC<{ onVolver: () => void; onDonacionCreada: (do
 
     const nuevaDonacion = crearDonacion({
       categoria: formData.categoria,
+      organizacion: formData.organizacion,
       nombreObjeto: formData.categoria === 'fondos' ? 'Donación monetaria' : formData.nombreObjeto,
       cantidad: formData.cantidad,
       descripcion: formData.descripcion,
@@ -365,6 +371,22 @@ const FormularioDonacion: React.FC<{ onVolver: () => void; onDonacionCreada: (do
                     <option value="fondos">Fondos monetarios</option>
                     <option value="ropa">Ropa</option>
                   </select>
+                </div>
+
+                <div>
+                  <label className="block font-semibold mb-2 text-black">Nombre de la organización*</label>
+                  <input
+                    type="text"
+                    required
+                    value={formData.organizacion}
+                    onChange={(e) => setFormData({ ...formData, organizacion: e.target.value })}
+                    className={`w-full px-4 py-2 bg-white border rounded-lg focus:outline-none focus:ring-2 ${
+                      erroresValidacion.organizacion
+                        ? 'border-red-500 focus:ring-red-500'
+                        : 'border-gray-300 focus:ring-blue-600'
+                    }`}
+                    placeholder="ejem. Bill Gates Fundantion"
+                  />
                 </div>
 
                 <div>

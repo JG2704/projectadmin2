@@ -1,2 +1,11 @@
 node_modules
 .env
+context.md
+CLAUDE.md
+Enunciado_SISTRATEC.pdf
+dbSchema.md
+db/migracion_bloque_a.sql
+results.md
+db/migracion_bloque_b5_storage.sql
+\db
+PRUEBAS.md

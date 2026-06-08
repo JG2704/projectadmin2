@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router';
 import { useDonaciones, CategoriaDonacion } from '../context/DonacionContext';
 import { Search, Heart, Package, DollarSign, Shirt, Menu, ChevronRight } from 'lucide-react';
 import { TrazabilidadDonacion } from './TrazabilidadDonacion';
+import { subirImagen } from '../lib/storage';
 
 export const PaginaPublica: React.FC = () => {
   const [vista, setVista] = useState<'inicio' | 'buscar' | 'donar' | 'confirmacion'>('inicio');
@@ -231,7 +232,8 @@ const FormularioDonacion: React.FC<{ onVolver: () => void; onDonacionCreada: (do
     emailDonante: '',
     telefonoDonante: '',
   });
-  const [imagenObjeto, setImagenObjeto] = useState<string | null>(null);
+  const [imagenFile, setImagenFile] = useState<File | null>(null);
+  const [imagenPreview, setImagenPreview] = useState<string | null>(null);
   const [erroresValidacion, setErroresValidacion] = useState<Record<string, string>>({});
   const { crearDonacion } = useDonaciones();
 
@@ -285,38 +287,48 @@ const FormularioDonacion: React.FC<{ onVolver: () => void; onDonacionCreada: (do
   const handleImagenChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        setImagenObjeto(reader.result as string);
-      };
-      reader.readAsDataURL(file);
+      setImagenFile(file);
+      setImagenPreview(URL.createObjectURL(file));
     }
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const [enviando, setEnviando] = useState(false);
+  const [errorEnvio, setErrorEnvio] = useState('');
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setErrorEnvio('');
 
     if (!validarFormulario()) {
       return;
     }
 
-    const nuevaDonacion = crearDonacion({
-      categoria: formData.categoria,
-      organizacion: formData.organizacion,
-      nombreObjeto: formData.categoria === 'fondos' ? 'Donación monetaria' : formData.nombreObjeto,
-      cantidad: formData.cantidad,
-      descripcion: formData.descripcion,
-      estadoArticulo: formData.categoria !== 'fondos' ? formData.estadoArticulo : undefined,
-      imagenObjeto: imagenObjeto || undefined,
-      donante: {
-        nombre: formData.nombreDonante,
-        cedula: formData.cedulaDonante,
-        email: formData.emailDonante || undefined,
-        telefono: formData.telefonoDonante || undefined,
-      },
-    });
+    setEnviando(true);
+    try {
+      const urlImagen = imagenFile ? await subirImagen(imagenFile, 'objetos') : undefined;
 
-    onDonacionCreada({ id: nuevaDonacion.id, donacion: nuevaDonacion });
+      const nuevaDonacion = await crearDonacion({
+        categoria: formData.categoria,
+        organizacion: formData.organizacion,
+        nombreObjeto: formData.categoria === 'fondos' ? 'Donación monetaria' : formData.nombreObjeto,
+        cantidad: formData.cantidad,
+        descripcion: formData.descripcion,
+        estadoArticulo: formData.categoria !== 'fondos' ? formData.estadoArticulo : undefined,
+        imagenObjeto: urlImagen,
+        donante: {
+          nombre: formData.nombreDonante,
+          cedula: formData.cedulaDonante,
+          email: formData.emailDonante || undefined,
+          telefono: formData.telefonoDonante || undefined,
+        },
+      });
+
+      onDonacionCreada({ id: nuevaDonacion.id, donacion: nuevaDonacion });
+    } catch (error) {
+      setErrorEnvio('No se pudo registrar la donación. Intente nuevamente.');
+    } finally {
+      setEnviando(false);
+    }
   };
 
   const getCategoriaLabel = () => {
@@ -491,11 +503,18 @@ const FormularioDonacion: React.FC<{ onVolver: () => void; onDonacionCreada: (do
                   </div>
                 )}
 
+                {errorEnvio && (
+                  <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-2 rounded-lg text-sm">
+                    {errorEnvio}
+                  </div>
+                )}
+
                 <button
                   type="submit"
-                  className="w-full bg-blue-600 hover:bg-blue-700 text-white py-3 rounded-lg transition-colors font-semibold text-lg"
+                  disabled={enviando}
+                  className="w-full bg-blue-600 hover:bg-blue-700 disabled:opacity-60 text-white py-3 rounded-lg transition-colors font-semibold text-lg"
                 >
-                  Enviar
+                  {enviando ? 'Enviando…' : 'Enviar'}
                 </button>
               </form>
             </div>
@@ -511,8 +530,8 @@ const FormularioDonacion: React.FC<{ onVolver: () => void; onDonacionCreada: (do
                   id="imagen-input"
                 />
                 <label htmlFor="imagen-input" className="cursor-pointer w-full h-full flex items-center justify-center">
-                  {imagenObjeto ? (
-                    <img src={imagenObjeto} alt="Vista previa" className="w-full h-full object-cover rounded" />
+                  {imagenPreview ? (
+                    <img src={imagenPreview} alt="Vista previa" className="w-full h-full object-cover rounded" />
                   ) : (
                     <div className="text-center text-gray-400">
                       <Package size={48} className="mx-auto mb-2" />

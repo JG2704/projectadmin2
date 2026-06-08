@@ -1,12 +1,16 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+import type { User as SupabaseUser } from '@supabase/supabase-js';
+import { supabase } from '../lib/supabaseClient';
+import { rolADB, rolDesdeDB, PerfilRow } from '../lib/mappers';
 
-export type UserRole = 'admin' | 'transportista';
+export type UserRole = 'admin' | 'transportista' | 'donante';
 
 export const normalizeRole = (rol: string | undefined): UserRole | null => {
   if (!rol) return null;
   const normalized = rol.toLowerCase().trim();
-  if (normalized === 'admin' || normalized === 'administrador') return 'admin';
+  if (normalized === 'admin' || normalized === 'administrador' || normalized === 'administrador de centro') return 'admin';
   if (normalized === 'transportista' || normalized === 'repartidor') return 'transportista';
+  if (normalized === 'donante') return 'donante';
   return null;
 };
 
@@ -20,6 +24,7 @@ export interface User {
 
 interface AuthContextType {
   user: User | null;
+  loading: boolean;
   login: (email: string, password: string) => Promise<boolean>;
   register: (userData: {
     nombreCompleto: string;
@@ -42,20 +47,47 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
+  const [loading, setLoading] = useState(true);
 
+  // Construye el User del frontend a partir de la sesión de Auth + su perfil en la BD
+  const cargarUsuario = async (sessionUser: SupabaseUser): Promise<User | null> => {
+    const { data: perfil, error } = await supabase
+      .from('perfiles')
+      .select('*')
+      .eq('id', sessionUser.id)
+      .single<PerfilRow>();
+
+    if (error || !perfil) return null;
+
+    return {
+      id: perfil.id,
+      nombreCompleto: perfil.nombre_completo,
+      correoElectronico: sessionUser.email ?? '',
+      telefono: perfil.telefono ?? '',
+      rol: rolDesdeDB(perfil.rol) ?? 'donante',
+    };
+  };
+
+  // Carga la sesión inicial y se suscribe a los cambios de autenticación
   useEffect(() => {
-    const savedUser = localStorage.getItem('sistra-user');
-    if (savedUser) {
-      const parsed = JSON.parse(savedUser);
-      const rol = normalizeRole(parsed.rol);
-      if (rol) {
-        const userWithRole = { ...parsed, rol };
-        setUser(userWithRole);
-        if (parsed.rol !== rol) {
-          localStorage.setItem('sistra-user', JSON.stringify(userWithRole));
-        }
-      }
-    }
+    let activo = true;
+
+    supabase.auth.getSession().then(async ({ data: { session } }) => {
+      if (!activo) return;
+      setUser(session?.user ? await cargarUsuario(session.user) : null);
+      setLoading(false);
+    });
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange(async (_event, session) => {
+      setUser(session?.user ? await cargarUsuario(session.user) : null);
+    });
+
+    return () => {
+      activo = false;
+      subscription.unsubscribe();
+    };
   }, []);
 
   const register = async (userData: {
@@ -65,77 +97,37 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     contraseña: string;
     rol: UserRole;
   }): Promise<boolean> => {
-    try {
-      const users = JSON.parse(localStorage.getItem('sistra-users') || '[]');
+    const { data, error } = await supabase.auth.signUp({
+      email: userData.correoElectronico,
+      password: userData.contraseña,
+      options: {
+        // El trigger on_auth_user_created lee estos datos para crear el perfil
+        data: {
+          nombre_completo: userData.nombreCompleto,
+          rol: rolADB(userData.rol),
+          telefono: userData.telefono,
+        },
+      },
+    });
 
-      const existingUser = users.find(
-        (u: any) => u.correoElectronico === userData.correoElectronico
-      );
-
-      if (existingUser) {
-        return false;
-      }
-
-      const rolRegistro = normalizeRole(userData.rol) ?? userData.rol;
-      const newUser = {
-        id: Date.now().toString(),
-        nombreCompleto: userData.nombreCompleto,
-        correoElectronico: userData.correoElectronico,
-        telefono: userData.telefono,
-        rol: rolRegistro,
-        contraseña: userData.contraseña,
-      };
-
-      users.push(newUser);
-      localStorage.setItem('sistra-users', JSON.stringify(users));
-
-      const { contraseña, ...userWithoutPassword } = newUser;
-      const rol = normalizeRole(userWithoutPassword.rol) ?? userData.rol;
-      const userToStore = { ...userWithoutPassword, rol };
-      setUser(userToStore);
-      localStorage.setItem('sistra-user', JSON.stringify(userToStore));
-
-      return true;
-    } catch (error) {
-      console.error('Error en registro:', error);
+    if (error || !data.user) {
+      console.error('Error en registro:', error?.message);
       return false;
     }
+
+    if (data.session?.user) {
+      setUser(await cargarUsuario(data.session.user));
+    }
+    return true;
   };
 
   const login = async (email: string, password: string): Promise<boolean> => {
-    try {
-      const users = JSON.parse(localStorage.getItem('sistra-users') || '[]');
-      const foundUser = users.find(
-        (u: any) => u.correoElectronico === email && u.contraseña === password
-      );
-
-      if (foundUser) {
-        const rol = normalizeRole(foundUser.rol);
-        if (!rol) return false;
-
-        if (foundUser.rol !== rol) {
-          foundUser.rol = rol;
-          const userIndex = users.findIndex(
-            (u: { correoElectronico: string }) => u.correoElectronico === email
-          );
-          if (userIndex !== -1) {
-            users[userIndex] = foundUser;
-            localStorage.setItem('sistra-users', JSON.stringify(users));
-          }
-        }
-
-        const { contraseña, ...userWithoutPassword } = foundUser;
-        const userToStore = { ...userWithoutPassword, rol };
-        setUser(userToStore);
-        localStorage.setItem('sistra-user', JSON.stringify(userToStore));
-        return true;
-      }
-
-      return false;
-    } catch (error) {
-      console.error('Error en login:', error);
+    const { error } = await supabase.auth.signInWithPassword({ email, password });
+    if (error) {
+      console.error('Error en login:', error.message);
       return false;
     }
+    return true;
   };
 
   const updateProfile = async (data: {
@@ -146,53 +138,52 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   }): Promise<boolean> => {
     if (!user) return false;
 
-    try {
-      const users = JSON.parse(localStorage.getItem('sistra-users') || '[]');
-      const userIndex = users.findIndex(
-        (u: { id: string }) => u.id === user.id
-      );
-      if (userIndex === -1) return false;
+    // 1) Correo / contraseña viven en Supabase Auth
+    const authUpdate: { email?: string; password?: string } = {};
+    if (data.correoElectronico && data.correoElectronico !== user.correoElectronico) {
+      authUpdate.email = data.correoElectronico;
+    }
+    if (data.contraseña) {
+      authUpdate.password = data.contraseña;
+    }
+    if (Object.keys(authUpdate).length > 0) {
+      const { error } = await supabase.auth.updateUser(authUpdate);
+      if (error) {
+        console.error('Error al actualizar credenciales:', error.message);
+        return false;
+      }
+    }
 
-      const emailEnUso = users.some(
-        (u: { id: string; correoElectronico: string }) =>
-          u.id !== user.id &&
-          u.correoElectronico.toLowerCase() === data.correoElectronico.toLowerCase()
-      );
-      if (emailEnUso) return false;
+    // 2) Nombre / teléfono viven en la tabla perfiles
+    const { error: perfilError } = await supabase
+      .from('perfiles')
+      .update({ nombre_completo: data.nombreCompleto, telefono: data.telefono })
+      .eq('id', user.id);
 
-      const usuarioActual = users[userIndex];
-      const usuarioActualizado = {
-        ...usuarioActual,
-        nombreCompleto: data.nombreCompleto,
-        correoElectronico: data.correoElectronico,
-        telefono: data.telefono,
-        ...(data.contraseña ? { contraseña: data.contraseña } : {}),
-      };
-
-      users[userIndex] = usuarioActualizado;
-      localStorage.setItem('sistra-users', JSON.stringify(users));
-
-      const { contraseña, ...userWithoutPassword } = usuarioActualizado;
-      const rol = normalizeRole(userWithoutPassword.rol) ?? user.rol;
-      const userToStore = { ...userWithoutPassword, rol };
-      setUser(userToStore);
-      localStorage.setItem('sistra-user', JSON.stringify(userToStore));
-      return true;
-    } catch (error) {
-      console.error('Error al actualizar perfil:', error);
+    if (perfilError) {
+      console.error('Error al actualizar perfil:', perfilError.message);
       return false;
     }
+
+    setUser({
+      ...user,
+      nombreCompleto: data.nombreCompleto,
+      correoElectronico: data.correoElectronico,
+      telefono: data.telefono,
+    });
+    return true;
   };
 
   const logout = () => {
+    supabase.auth.signOut();
     setUser(null);
-    localStorage.removeItem('sistra-user');
   };
 
   return (
     <AuthContext.Provider
       value={{
         user,
+        loading,
         login,
         register,
         updateProfile,

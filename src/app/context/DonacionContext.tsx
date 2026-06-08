@@ -1,4 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+import { supabase } from '../lib/supabaseClient';
+import { donacionDesdeDB, estadoADB, DonacionRow, HistorialRow } from '../lib/mappers';
 
 export type CategoriaDonacion = 'medicamentos' | 'fondos' | 'ropa';
 
@@ -17,7 +19,9 @@ export interface EventoTrazabilidad {
 }
 
 export interface Donacion {
-  id: string;
+  id: string;            // código visible (DON-001)
+  uuid?: string;         // PK interna de la BD (uuid); se llena al leer desde Supabase
+  donanteId?: string;    // id de la cuenta que registró la donación (null si fue anónima)
   categoria: CategoriaDonacion;
   organizacion: string;
   nombreObjeto: string;
@@ -38,293 +42,174 @@ export interface Donacion {
 
 interface DonacionContextType {
   donaciones: Donacion[];
-  crearDonacion: (donacion: Omit<Donacion, 'id' | 'fechaCreacion' | 'estadoActual' | 'trazabilidad'>) => Donacion;
+  crearDonacion: (donacion: Omit<Donacion, 'id' | 'uuid' | 'donanteId' | 'fechaCreacion' | 'estadoActual' | 'trazabilidad'>) => Promise<Donacion>;
   buscarDonacion: (id: string) => Donacion | undefined;
-  actualizarEstadoDonacion: (id: string, nuevoEstado: EstadoDonacion, descripcion: string, responsable: string, imagenEntrega?: string) => void;
-  clasificarDonacion: (id: string, estadoArticulo: EstadoArticulo, responsable: string) => void;
+  actualizarEstadoDonacion: (id: string, nuevoEstado: EstadoDonacion, descripcion: string, responsable: string, imagenEntrega?: string) => Promise<void>;
+  clasificarDonacion: (id: string, estadoArticulo: EstadoArticulo, responsable: string) => Promise<void>;
 }
 
-const STORAGE_KEY = 'sistra-donaciones';
-const SYNC_EVENT = 'sistra-donaciones-updated';
+// Donación con su trazabilidad embebida (PostgREST devuelve la relación anidada)
+type DonacionConHistorial = DonacionRow & { historial_donaciones: HistorialRow[] | null };
 
 const DonacionContext = createContext<DonacionContextType | undefined>(undefined);
-
-const loadDonacionesFromStorage = (): Donacion[] | null => {
-  const saved = localStorage.getItem(STORAGE_KEY);
-  if (!saved) return null;
-  try {
-    return JSON.parse(saved) as Donacion[];
-  } catch {
-    return null;
-  }
-};
-
-const generarNuevoId = (donaciones: Donacion[]): string => {
-  const maxNum = donaciones.reduce((max, d) => {
-    const match = d.id.match(/DON-(\d+)/i);
-    return match ? Math.max(max, parseInt(match[1], 10)) : max;
-  }, 0);
-  return `DON-${String(maxNum + 1).padStart(3, '0')}`;
-};
 
 export const DonacionProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const [donaciones, setDonaciones] = useState<Donacion[]>([]);
 
-  const persistDonaciones = (nuevasDonaciones: Donacion[]) => {
-    setDonaciones(nuevasDonaciones);
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(nuevasDonaciones));
-    window.dispatchEvent(
-      new CustomEvent(SYNC_EVENT, { detail: nuevasDonaciones })
+  // Trae todas las donaciones con su historial embebido y las traduce al modelo del frontend
+  const obtenerDonaciones = async (): Promise<Donacion[]> => {
+    const { data, error } = await supabase
+      .from('donaciones')
+      .select('*, historial_donaciones(*)')
+      .order('creado_en', { ascending: true });
+
+    if (error || !data) {
+      console.error('Error al cargar donaciones:', error?.message);
+      return [];
+    }
+
+    return (data as DonacionConHistorial[]).map((row) =>
+      donacionDesdeDB(row, row.historial_donaciones ?? [])
     );
   };
 
+  const recargar = async () => {
+    setDonaciones(await obtenerDonaciones());
+  };
+
+  // Carga inicial + suscripción Realtime a los cambios en ambas tablas
   useEffect(() => {
-    const savedDonaciones = loadDonacionesFromStorage();
-    if (savedDonaciones) {
-      setDonaciones(savedDonaciones);
-    } else {
-      // Datos de ejemplo
-      const ejemploDonaciones: Donacion[] = [
-        {
-          id: 'DON-001',
-          categoria: 'medicamentos',
-          organizacion: 'HelpCare',
-          nombreObjeto: 'Medicamentos varios',
-          cantidad: '50',
-          descripcion: 'Analgésicos y antibióticos',
-          estadoArticulo: 'excelente',
-          donante: {
-            nombre: 'María Rodríguez',
-            cedula: '1-1234-5678',
-            email: 'maria@example.com',
-            telefono: '8888-8888',
-          },
-          fechaCreacion: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString(),
-          estadoActual: 'entregado',
-          trazabilidad: [
-            {
-              id: '1',
-              fecha: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString(),
-              estado: 'recibido',
-              descripcion: 'Donación recibida en centro de acopio',
-              ubicacion: 'San José Centro',
-              responsable: 'Sistema',
-            },
-            {
-              id: '2',
-              fecha: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString(),
-              estado: 'clasificado',
-              descripcion: 'Su objeto donado ha sido clasificado, está listo para que un mensajero asuma la entrega. Puede seguir consultado para estar informado de su donación',
-              ubicacion: 'San José Centro',
-              responsable: 'Admin Principal',
-            },
-            {
-              id: '3',
-              fecha: new Date(Date.now() - 1 * 24 * 60 * 60 * 1000).toISOString(),
-              estado: 'en_transito',
-              descripcion: 'En camino a zona afectada',
-              ubicacion: 'Ruta 32',
-              responsable: 'Carlos Transportista',
-            },
-            {
-              id: '4',
-              fecha: new Date().toISOString(),
-              estado: 'entregado',
-              descripcion: 'Entregado a beneficiarios en Limón',
-              ubicacion: 'Limón',
-              responsable: 'Carlos Transportista',
-            },
-          ],
-        },
-        {
-          id: 'DON-002',
-          categoria: 'ropa',
-          organizacion: 'IsaacHelp',
-          nombreObjeto: 'Ropa de abrigo',
-          cantidad: '100',
-          descripcion: 'Ropa de abrigo y calzado',
-          estadoArticulo: 'bueno',
-          donante: {
-            nombre: 'Juan Pérez',
-            cedula: '2-2345-6789',
-            telefono: '7777-7777',
-          },
-          fechaCreacion: new Date(Date.now() - 1 * 24 * 60 * 60 * 1000).toISOString(),
-          estadoActual: 'en_transito',
-          trazabilidad: [
-            {
-              id: '1',
-              fecha: new Date(Date.now() - 1 * 24 * 60 * 60 * 1000).toISOString(),
-              estado: 'recibido',
-              descripcion: 'Donación recibida en centro de acopio',
-              ubicacion: 'Cartago',
-              responsable: 'Sistema',
-            },
-            {
-              id: '2',
-              fecha: new Date(Date.now() - 12 * 60 * 60 * 1000).toISOString(),
-              estado: 'clasificado',
-              descripcion: 'Su objeto donado ha sido clasificado, está listo para que un mensajero asuma la entrega. Puede seguir consultado para estar informado de su donación',
-              ubicacion: 'Cartago',
-              responsable: 'Admin Principal',
-            },
-            {
-              id: '3',
-              fecha: new Date().toISOString(),
-              estado: 'en_transito',
-              descripcion: 'En ruta hacia Guanacaste',
-              ubicacion: 'Autopista General Cañas',
-              responsable: 'Ana Transportista',
-            },
-          ],
-        },
-        {
-          id: 'DON-003',
-          categoria: 'fondos',
-          organizacion: 'Fonds',
-          nombreObjeto: 'Donación monetaria',
-          cantidad: '50000',
-          descripcion: 'Aporte para compra de alimentos',
-          donante: {
-            nombre: 'Carlos Jiménez',
-            cedula: '3-3456-7890',
-            email: 'carlos@example.com',
-          },
-          fechaCreacion: new Date().toISOString(),
-          estadoActual: 'recibido',
-          trazabilidad: [
-            {
-              id: '1',
-              fecha: new Date().toISOString(),
-              estado: 'recibido',
-              descripcion: 'Donación monetaria recibida',
-              responsable: 'Sistema',
-            },
-          ],
-        },
-      ];
-      persistDonaciones(ejemploDonaciones);
-    }
+    recargar();
 
-    const syncFromStorage = () => {
-      const stored = loadDonacionesFromStorage();
-      if (stored) setDonaciones(stored);
-    };
+    const canal = supabase
+      .channel('donaciones-cambios')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'donaciones' }, () => {
+        recargar();
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'historial_donaciones' }, () => {
+        recargar();
+      })
+      .subscribe();
 
-    const onStorage = (e: StorageEvent) => {
-      if (e.key === STORAGE_KEY) syncFromStorage();
-    };
-
-    const onCustomSync = (e: Event) => {
-      const custom = e as CustomEvent<Donacion[]>;
-      if (custom.detail) setDonaciones(custom.detail);
-      else syncFromStorage();
-    };
-
-    const onFocus = () => syncFromStorage();
-    const onVisibilityChange = () => {
-      if (document.visibilityState === 'visible') syncFromStorage();
-    };
-
-    window.addEventListener('storage', onStorage);
-    window.addEventListener(SYNC_EVENT, onCustomSync);
-    window.addEventListener('focus', onFocus);
-    document.addEventListener('visibilitychange', onVisibilityChange);
     return () => {
-      window.removeEventListener('storage', onStorage);
-      window.removeEventListener(SYNC_EVENT, onCustomSync);
-      window.removeEventListener('focus', onFocus);
-      document.removeEventListener('visibilitychange', onVisibilityChange);
+      supabase.removeChannel(canal);
     };
   }, []);
 
-  const crearDonacion = (donacion: Omit<Donacion, 'id' | 'fechaCreacion' | 'estadoActual' | 'trazabilidad'>): Donacion => {
-    const stored = loadDonacionesFromStorage() ?? donaciones;
-    const nuevoId = generarNuevoId(stored);
-    const fechaCreacion = new Date().toISOString();
+  const crearDonacion = async (
+    donacion: Omit<Donacion, 'id' | 'uuid' | 'donanteId' | 'fechaCreacion' | 'estadoActual' | 'trazabilidad'>
+  ): Promise<Donacion> => {
+    // Si hay sesión activa, la donación queda vinculada a esa cuenta (donante)
+    const { data: { user } } = await supabase.auth.getUser();
 
-    const nuevaDonacion: Donacion = {
-      ...donacion,
-      id: nuevoId,
-      fechaCreacion,
-      estadoActual: 'recibido',
-      trazabilidad: [
-        {
-          id: '1',
-          fecha: fechaCreacion,
-          estado: 'recibido',
-          descripcion: 'Donación registrada en el sistema',
-          ubicacion: 'Centro de Acopio Principal',
-          responsable: 'Sistema',
-        },
-      ],
-    };
+    const { data, error } = await supabase
+      .from('donaciones')
+      .insert({
+        descripcion_bienes: donacion.descripcion,
+        categoria: donacion.categoria,
+        organizacion: donacion.organizacion,
+        nombre_objeto: donacion.nombreObjeto,
+        cantidad: donacion.cantidad,
+        estado_articulo: donacion.estadoArticulo ?? null,
+        imagen_objeto: donacion.imagenObjeto ?? null,
+        donante_nombre: donacion.donante.nombre,
+        donante_cedula: donacion.donante.cedula,
+        donante_email: donacion.donante.email ?? null,
+        donante_telefono: donacion.donante.telefono ?? null,
+        donante_id: user?.id ?? null,
+      })
+      .select('*, historial_donaciones(*)')
+      .single();
 
-    const nuevasDonaciones = [...stored, nuevaDonacion];
-    persistDonaciones(nuevasDonaciones);
+    if (error || !data) {
+      console.error('Error al crear donación:', error?.message);
+      throw new Error(error?.message ?? 'No se pudo registrar la donación');
+    }
 
-    return nuevaDonacion;
+    const fila = data as DonacionConHistorial;
+    const nueva = donacionDesdeDB(fila, fila.historial_donaciones ?? []);
+    await recargar();
+    return nueva;
   };
 
+  // Búsqueda por código (DON-001) sobre lo ya cargado en memoria
   const buscarDonacion = (id: string): Donacion | undefined => {
-    const actuales = loadDonacionesFromStorage() ?? donaciones;
-    return actuales.find(d => d.id.toLowerCase() === id.toLowerCase());
+    return donaciones.find((d) => d.id.toLowerCase() === id.toLowerCase());
   };
 
-  const actualizarEstadoDonacion = (
+  const actualizarEstadoDonacion = async (
     id: string,
     nuevoEstado: EstadoDonacion,
     descripcion: string,
     responsable: string,
     imagenEntrega?: string
-  ) => {
-    const actuales = loadDonacionesFromStorage() ?? donaciones;
-    const donacionIndex = actuales.findIndex(d => d.id === id);
-    if (donacionIndex === -1) return;
+  ): Promise<void> => {
+    const donacion = donaciones.find((d) => d.id === id);
+    if (!donacion?.uuid) return;
 
-    const donacionActualizada = { ...actuales[donacionIndex] };
-    donacionActualizada.estadoActual = nuevoEstado;
+    const estadoAnterior = estadoADB(donacion.estadoActual);
+    const estadoNuevo = estadoADB(nuevoEstado);
 
-    const nuevoEvento: EventoTrazabilidad = {
-      id: String(donacionActualizada.trazabilidad.length + 1),
-      fecha: new Date().toISOString(),
-      estado: nuevoEstado,
-      descripcion,
+    const { error: errUpdate } = await supabase
+      .from('donaciones')
+      .update({ estado: estadoNuevo, actualizado_en: new Date().toISOString() })
+      .eq('id', donacion.uuid);
+
+    if (errUpdate) {
+      console.error('Error al actualizar estado:', errUpdate.message);
+      return;
+    }
+
+    const { error: errHist } = await supabase.from('historial_donaciones').insert({
+      donacion_id: donacion.uuid,
+      estado_anterior: estadoAnterior,
+      estado_nuevo: estadoNuevo,
+      notas_trazabilidad: descripcion,
       responsable,
-      imagenEntrega,
-    };
+      imagen_entrega: imagenEntrega ?? null,
+    });
 
-    donacionActualizada.trazabilidad.push(nuevoEvento);
+    if (errHist) console.error('Error al registrar trazabilidad:', errHist.message);
 
-    const nuevasDonaciones = [...actuales];
-    nuevasDonaciones[donacionIndex] = donacionActualizada;
-
-    persistDonaciones(nuevasDonaciones);
+    await recargar();
   };
 
-  const clasificarDonacion = (id: string, estadoArticulo: EstadoArticulo, responsable: string) => {
-    const actuales = loadDonacionesFromStorage() ?? donaciones;
-    const donacionIndex = actuales.findIndex(d => d.id === id);
-    if (donacionIndex === -1) return;
+  const clasificarDonacion = async (
+    id: string,
+    estadoArticulo: EstadoArticulo,
+    responsable: string
+  ): Promise<void> => {
+    const donacion = donaciones.find((d) => d.id === id);
+    if (!donacion?.uuid) return;
 
-    const donacionActualizada = { ...actuales[donacionIndex] };
-    donacionActualizada.estadoArticulo = estadoArticulo;
-    donacionActualizada.estadoActual = 'clasificado';
+    const estadoAnterior = estadoADB(donacion.estadoActual);
 
-    const nuevoEvento: EventoTrazabilidad = {
-      id: String(donacionActualizada.trazabilidad.length + 1),
-      fecha: new Date().toISOString(),
-      estado: 'clasificado',
-      descripcion: 'Su objeto donado ha sido clasificado, está listo para que un mensajero asuma la entrega. Puede seguir consultado para estar informado de su donación',
+    const { error: errUpdate } = await supabase
+      .from('donaciones')
+      .update({
+        estado: 'Clasificado',
+        estado_articulo: estadoArticulo,
+        actualizado_en: new Date().toISOString(),
+      })
+      .eq('id', donacion.uuid);
+
+    if (errUpdate) {
+      console.error('Error al clasificar:', errUpdate.message);
+      return;
+    }
+
+    const { error: errHist } = await supabase.from('historial_donaciones').insert({
+      donacion_id: donacion.uuid,
+      estado_anterior: estadoAnterior,
+      estado_nuevo: 'Clasificado',
+      notas_trazabilidad:
+        'Su objeto donado ha sido clasificado, está listo para que un mensajero asuma la entrega. Puede seguir consultado para estar informado de su donación',
       responsable,
-    };
+    });
 
-    donacionActualizada.trazabilidad.push(nuevoEvento);
+    if (errHist) console.error('Error al registrar trazabilidad:', errHist.message);
 
-    const nuevasDonaciones = [...actuales];
-    nuevasDonaciones[donacionIndex] = donacionActualizada;
-
-    persistDonaciones(nuevasDonaciones);
+    await recargar();
   };
 
   return (

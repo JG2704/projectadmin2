@@ -4,6 +4,7 @@ import { useDonaciones, Donacion, EstadoDonacion, CategoriaDonacion, EstadoArtic
 import { Upload, Heart } from 'lucide-react';
 import { TrazabilidadDonacion } from './TrazabilidadDonacion';
 import { DashboardLayout } from './DashboardLayout';
+import { subirImagen } from '../lib/storage';
 
 export const DashboardTransportista: React.FC = () => {
   const { user } = useAuth();
@@ -174,36 +175,43 @@ const ModalEntregar: React.FC<{
   onEntregar: (id: string, estado: EstadoDonacion, descripcion: string, responsable: string, imagen?: string) => void;
   nombreUsuario: string;
 }> = ({ donacion, onCerrar, onEntregar, nombreUsuario }) => {
-  const [imagenEntrega, setImagenEntrega] = useState<string | null>(null);
+  const [imagenFile, setImagenFile] = useState<File | null>(null);
+  const [imagenPreview, setImagenPreview] = useState<string | null>(null);
+  const [subiendo, setSubiendo] = useState(false);
   const inputId = `imagen-entrega-${donacion.id}`;
 
   const handleImagenChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        setImagenEntrega(reader.result as string);
-      };
-      reader.readAsDataURL(file);
+      setImagenFile(file);
+      setImagenPreview(URL.createObjectURL(file));
     }
   };
 
-  const handleEntregar = () => {
-    if (!imagenEntrega) {
+  const handleEntregar = async () => {
+    if (!imagenFile) {
       alert('Debe subir una imagen de comprobación de entrega');
       return;
     }
-    onEntregar(
-      donacion.id,
-      'entregado',
-      `Entrega confirmada de ${donacion.nombreObjeto}`,
-      nombreUsuario,
-      imagenEntrega
-    );
-    onCerrar();
+    setSubiendo(true);
+    try {
+      const urlImagen = await subirImagen(imagenFile, 'entregas');
+      await onEntregar(
+        donacion.id,
+        'entregado',
+        `Entrega confirmada de ${donacion.nombreObjeto}`,
+        nombreUsuario,
+        urlImagen
+      );
+      onCerrar();
+    } catch (error) {
+      alert('No se pudo subir la imagen de entrega. Intente nuevamente.');
+    } finally {
+      setSubiendo(false);
+    }
   };
 
-  const imagenReferencia = imagenEntrega || donacion.imagenObjeto;
+  const imagenReferencia = imagenPreview || donacion.imagenObjeto;
 
   return (
     <div className="fixed inset-0 bg-black/60 flex items-center justify-center p-4 z-50">
@@ -273,9 +281,10 @@ const ModalEntregar: React.FC<{
           <button
             type="button"
             onClick={handleEntregar}
-            className="bg-green-500 hover:bg-green-600 text-white font-bold text-lg px-16 py-3 rounded-xl transition-colors"
+            disabled={subiendo}
+            className="bg-green-500 hover:bg-green-600 disabled:opacity-60 text-white font-bold text-lg px-16 py-3 rounded-xl transition-colors"
           >
-            Entregar
+            {subiendo ? 'Entregando…' : 'Entregar'}
           </button>
         </div>
       </div>

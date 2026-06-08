@@ -2,6 +2,7 @@ import React from 'react';
 import { useAuth, normalizeRole } from '../context/AuthContext';
 import { DashboardAdmin } from './DashboardAdmin';
 import { DashboardTransportista } from './DashboardTransportista';
+import { DashboardDonante } from './DashboardDonante';
 
 export const Dashboard: React.FC = () => {
   const { user } = useAuth();
@@ -13,6 +14,10 @@ export const Dashboard: React.FC = () => {
 
   if (rol === 'transportista') {
     return <DashboardTransportista />;
+  }
+
+  if (rol === 'donante') {
+    return <DashboardDonante />;
   }
 
   return null;

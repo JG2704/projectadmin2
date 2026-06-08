@@ -150,8 +150,19 @@ export const Registro: React.FC = () => {
             </div>
 
             <div>
-              <label className="block mb-2 font-semibold text-gray-800">¿Eres administrador o repartidor?</label>
-              <div className="flex gap-4">
+              <label className="block mb-2 font-semibold text-gray-800">¿Cuál es tu rol?</label>
+              <div className="flex flex-wrap gap-4">
+                <label className="flex items-center gap-2">
+                  <input
+                    type="radio"
+                    name="rol"
+                    value="donante"
+                    checked={formData.rol === 'donante'}
+                    onChange={(e) => handleChange('rol', e.target.value)}
+                    className="w-4 h-4"
+                  />
+                  <span className="text-gray-800">Donante</span>
+                </label>
                 <label className="flex items-center gap-2">
                   <input
                     type="radio"

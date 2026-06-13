@@ -237,6 +237,61 @@ const FormularioDonacion: React.FC<{ onVolver: () => void; onDonacionCreada: (do
   const [erroresValidacion, setErroresValidacion] = useState<Record<string, string>>({});
   const { crearDonacion } = useDonaciones();
 
+  // Para validar espacios que no pueden tener letras
+  const handleChangeLetras = (e: any) => {
+    const { name, value } = e.target;
+    
+    // Filtramos para que solo queden letras y espacios
+    const soloLetras = value.replace(/[^a-zA-ZáéíóúÁÉÍÓÚñÑ\s]/g, '');
+    
+    // Validamos el límite de 75 caracteres antes de guardar en el estado
+    if (soloLetras.length <= 75) {
+      setFormData({
+        ...formData,
+        [name]: soloLetras
+      });
+    }
+  };
+
+  // Para validar que SOLO acepte números (ideal para la cantidad)
+  const handleChangeNumeros = (e: any) => {
+    const { name, value } = e.target;
+    
+    // La expresión \D significa "cualquier cosa que NO sea un número"
+    // Lo reemplazamos por vacío, dejando solo números
+    const soloNumeros = value.replace(/\D/g, '');
+    
+    setFormData({
+      ...formData,
+      [name]: soloNumeros
+    });
+  };
+
+  // Para autocompletar y forzar el formato de la cédula: 1-1234-5678
+  const handleChangeCedula = (e: any) => {
+    let valor = e.target.value;
+    
+    // 1. Primero, eliminamos cualquier cosa que no sea número
+    const soloNumeros = valor.replace(/\D/g, '');
+
+    // 2. Aplicamos la lógica para ir poniendo los guiones automáticamente
+    let cedulaFormateada = soloNumeros;
+    
+    if (soloNumeros.length > 5) {
+      // Si tiene más de 5 números: 1-1234-5678
+      cedulaFormateada = `${soloNumeros.slice(0, 1)}-${soloNumeros.slice(1, 5)}-${soloNumeros.slice(5, 9)}`;
+    } else if (soloNumeros.length > 1) {
+      // Si tiene entre 2 y 5 números: 1-1234
+      cedulaFormateada = `${soloNumeros.slice(0, 1)}-${soloNumeros.slice(1, 5)}`;
+    }
+
+    // 3. Guardamos el resultado ya formateado en el estado
+    setFormData({
+      ...formData,
+      cedulaDonante: cedulaFormateada
+    });
+  };
+
   const validarFormulario = (): boolean => {
     const errores: Record<string, string> = {};
 
@@ -391,7 +446,8 @@ const FormularioDonacion: React.FC<{ onVolver: () => void; onDonacionCreada: (do
                     type="text"
                     required
                     value={formData.organizacion}
-                    onChange={(e) => setFormData({ ...formData, organizacion: e.target.value })}
+                    name="organizacion"
+                    onChange={handleChangeLetras}
                     className={`w-full px-4 py-2 bg-white border rounded-lg focus:outline-none focus:ring-2 ${
                       erroresValidacion.organizacion
                         ? 'border-red-500 focus:ring-red-500'
@@ -407,7 +463,8 @@ const FormularioDonacion: React.FC<{ onVolver: () => void; onDonacionCreada: (do
                     type="text"
                     required
                     value={formData.nombreDonante}
-                    onChange={(e) => setFormData({ ...formData, nombreDonante: e.target.value })}
+                    name="nombreDonante"
+                    onChange={handleChangeLetras}
                     className={`w-full px-4 py-2 bg-white border rounded-lg focus:outline-none focus:ring-2 ${
                       erroresValidacion.nombreDonante
                         ? 'border-red-500 focus:ring-red-500'
@@ -423,7 +480,8 @@ const FormularioDonacion: React.FC<{ onVolver: () => void; onDonacionCreada: (do
                     type="text"
                     required
                     value={formData.cedulaDonante}
-                    onChange={(e) => setFormData({ ...formData, cedulaDonante: e.target.value })}
+                    name="cedulaDonante"
+                    onChange={handleChangeCedula}
                     className={`w-full px-4 py-2 bg-white border rounded-lg focus:outline-none focus:ring-2 ${
                       erroresValidacion.cedulaDonante
                         ? 'border-red-500 focus:ring-red-500'
@@ -440,7 +498,8 @@ const FormularioDonacion: React.FC<{ onVolver: () => void; onDonacionCreada: (do
                       type="text"
                       required
                       value={formData.nombreObjeto}
-                      onChange={(e) => setFormData({ ...formData, nombreObjeto: e.target.value })}
+                      name="nombreObjeto"
+                      onChange={handleChangeLetras}
                       className={`w-full px-4 py-2 bg-white border rounded-lg focus:outline-none focus:ring-2 ${
                         erroresValidacion.nombreObjeto
                           ? 'border-red-500 focus:ring-red-500'
@@ -472,7 +531,8 @@ const FormularioDonacion: React.FC<{ onVolver: () => void; onDonacionCreada: (do
                     type="text"
                     required
                     value={formData.cantidad}
-                    onChange={(e) => setFormData({ ...formData, cantidad: e.target.value })}
+                    name="cantidad"
+                    onChange={handleChangeNumeros}
                     className={`w-full px-4 py-2 bg-white border rounded-lg focus:outline-none focus:ring-2 ${
                       erroresValidacion.cantidad
                         ? 'border-red-500 focus:ring-red-500'
